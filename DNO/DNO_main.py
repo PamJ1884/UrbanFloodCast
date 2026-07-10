@@ -4,9 +4,22 @@ import os
 import random
 import time
 
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
-from models.FNO import FNO2d, FNO3d
-from models.Unet import UNet2d, UNet3d
+try:
+    from models.FNO import FNO2d, FNO3d
+except ImportError as exc:
+    FNO2d = FNO3d = None
+    FNO_IMPORT_ERROR = exc
+else:
+    FNO_IMPORT_ERROR = None
+
+try:
+    from models.Unet import UNet2d, UNet3d
+except ImportError as exc:
+    UNet2d = UNet3d = None
+    UNET_IMPORT_ERROR = exc
+else:
+    UNET_IMPORT_ERROR = None
+
 # from models.GFNO_steerable import GFNO2d_steer
 # from models.Unet import Unet_Rot, Unet_Rot_M, Unet_Rot_3D
 from PIL import Image
@@ -34,7 +47,7 @@ from openpyxl import load_workbook
 torch.set_num_threads(1)
 
 if torch.cuda.is_available():
-    device = torch.device('cuda')
+    device = torch.device('cuda:0')
 else:
     device = torch.device('cpu')
 
@@ -171,17 +184,23 @@ writer = SummaryWriter(root)
 # Model init
 ################################################################
 if args.model_type in ["FNO2d", "FNO2d_aug"]:
+    if FNO2d is None:
+        raise ImportError("FNO2d is unavailable") from FNO_IMPORT_ERROR
     model = FNO2d(num_channels=num_channels, initial_step=initial_step, modes1=modes, modes2=modes, width=width,
-                  grid_type=grid_type).cuda()
+                  grid_type=grid_type).to(device)
 elif args.model_type in ["FNO3d", "FNO3d_aug"]:
+    if FNO3d is None:
+        raise ImportError("FNO3d is unavailable") from FNO_IMPORT_ERROR
     modes3 = time_modes if time_modes else modes
     model = FNO3d(num_channels=num_channels, initial_step=initial_step, modes1=modes, modes2=modes, modes3=modes3,
-                  width=width, time=time1, time_pad=args.time_pad).cuda()
+                  width=width, time=time1, time_pad=args.time_pad).to(device)
 elif args.model_type == "DNO":
-    model = DNO(num_channels=num_channels, width=10, initial_step=initial_step, pad=args.time_pad, factor=1).cuda()
+    model = DNO(num_channels=num_channels, width=10, initial_step=initial_step, pad=args.time_pad, factor=1).to(device)
 elif args.model_type == "UNet3d":
+    if UNet3d is None:
+        raise ImportError("UNet3d is unavailable") from UNET_IMPORT_ERROR
     model = UNet3d(in_channels=initial_step * num_channels, out_channels=num_channels_y, init_features=32,
-                   grid_type=grid_type, time=time1).cuda()
+                   grid_type=grid_type, time=time1).to(device)
 else:
     raise NotImplementedError("Model not recognized")
 
@@ -238,8 +257,8 @@ lploss = LpLoss(size_average=False)
 best_valid = float("inf")
 
 x_train, y_train, _ = next(iter(train_loader))
-x = x_train.cuda()
-y = y_train.cuda()
+x = x_train.to(device)
+y = y_train.to(device)
 x_valid, y_valid, _ = next(iter(valid_loader))
 if args.verbose:
     print(f"{args.model_type}; Input shape: {x.shape}, Target shape: {y.shape}")
@@ -277,9 +296,9 @@ for ep in range(epochs):
 
     for xx, yy, mask in tqdm(train_loader, disable=not args.verbose):
         loss = 0
-        xx = xx.cuda()
-        yy = yy.cuda()
-        mask = mask.cuda()
+        xx = xx.to(device)
+        yy = yy.to(device)
+        mask = mask.to(device)
         yy = yy * mask
 
         if args.strategy == "recurrent":
@@ -319,9 +338,9 @@ for ep in range(epochs):
         model(xx)
         for xx, yy, mask in valid_loader:
 
-            xx = xx.cuda()
-            yy = yy.cuda()
-            mask = mask.cuda()
+            xx = xx.to(device)
+            yy = yy.to(device)
+            mask = mask.to(device)
             yy = yy * mask
 
             pred = get_eval_pred(model=model, x=xx, strategy=args.strategy, T=T, times=eval_times).view(len(xx), Sy, Sx, T, num_channels_y)
@@ -370,9 +389,9 @@ sample_count = 0
 
 with torch.no_grad():
     for xx, yy, mask in test_loader:
-        xx = xx.cuda()
-        yy = yy.cuda()
-        mask = mask.cuda()
+        xx = xx.to(device)
+        yy = yy.to(device)
+        mask = mask.to(device)
         yy = yy * mask
         input_data = xx
         # print('xx', xx.shape)
@@ -398,7 +417,7 @@ with torch.no_grad():
                                              yy[..., 0:1].reshape(len(yy), -1, 1), 0.1).item()
         test_csi_3 += critical_success_index(pred[..., 0:1].reshape(len(pred), -1, 1),
                                              yy[..., 0:1].reshape(len(yy), -1, 1), 0.5).item()
-        
+
 print('sample_count', sample_count)
 print('ntest', ntest)
 average_time_per_sample = total_time / sample_count if sample_count > 0 else 0

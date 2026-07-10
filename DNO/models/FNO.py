@@ -1,7 +1,11 @@
 import torch.nn.functional as F
 import torch
 import torch.nn as nn
-from utils import grid
+
+try:
+    from DNO.utils25 import grid
+except ModuleNotFoundError:
+    from utils25 import grid
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Baseline FNO: code from https://github.com/neural-operator/fourier_neural_operator
@@ -56,7 +60,7 @@ class SpectralConv2d(nn.Module):
         super(SpectralConv2d, self).__init__()
 
         """
-        2D Fourier layer. It does FFT, linear transform, and Inverse FFT.    
+        2D Fourier layer. It does FFT, linear transform, and Inverse FFT.
         """
 
         self.in_channels = in_channels
@@ -198,7 +202,7 @@ class SpectralConv3d(nn.Module):
         super(SpectralConv3d, self).__init__()
 
         """
-        3D Fourier layer. It does FFT, linear transform, and Inverse FFT.    
+        3D Fourier layer. It does FFT, linear transform, and Inverse FFT.
         """
 
         self.in_channels = in_channels

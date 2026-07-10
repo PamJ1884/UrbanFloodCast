@@ -4,7 +4,11 @@ import torch.nn.functional as F
 
 import torch
 import torch.nn as nn
-from utils import grid
+
+try:
+    from DNO.utils25 import grid
+except ModuleNotFoundError:
+    from utils25 import grid
 
 
 class UNet1d(nn.Module):
