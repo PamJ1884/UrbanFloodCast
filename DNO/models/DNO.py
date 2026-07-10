@@ -108,11 +108,11 @@ class DNO(nn.Module):
         x_fc0 = x_fc0.permute(0, 4, 1, 2, 3)
         # print('x_fc0', x_fc0.shape)
 
-        self.padding = int(self.padding * 0.1 * x_fc0.shape[-1])
+        padding = int(self.padding * 0.1 * x_fc0.shape[-1])
         if self.pad_both:
-            x_fc0 = F.pad(x_fc0, [self.padding, self.padding, 0, 0, 0, 0], mode='constant')
+            x_fc0 = F.pad(x_fc0, [padding, padding, 0, 0, 0, 0], mode='constant')
         else:
-            x_fc0 = F.pad(x_fc0, [0, self.padding, 0, 0, 0, 0], mode='constant')
+            x_fc0 = F.pad(x_fc0, [0, padding, 0, 0, 0, 0], mode='constant')
 
         D1, D2, D3 = x_fc0.shape[-3], x_fc0.shape[-2], x_fc0.shape[-1]
 
@@ -145,11 +145,11 @@ class DNO(nn.Module):
                                                           mode='trilinear', align_corners=True)], dim=1)
         # print('x_c8', x_c8.shape)
 
-        if self.padding != 0:
+        if padding != 0:
             if self.pad_both:
-                x_c8 = x_c8[..., 2 * self.padding:-2 * self.padding]
+                x_c8 = x_c8[..., padding:-padding]
             else:
-                x_c8 = x_c8[..., :-2 * self.padding]
+                x_c8 = x_c8[..., :-padding]
 
         x_c8 = x_c8.permute(0, 2, 3, 4, 1)
         # print('x_c8', x_c8.shape)
