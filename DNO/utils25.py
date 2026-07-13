@@ -1,3 +1,4 @@
+import re
 import torch
 import os
 import numpy as np
@@ -5,6 +6,14 @@ import numpy as np
 ################################################################
 # Dataset class
 ################################################################
+def _natural_sort_key(name):
+    parts = re.split(r"(\d+)", name)
+    return tuple(
+        (0, int(part)) if part.isdigit()
+        else (1, part.casefold())
+        for part in parts
+    )
+
 class flood_data(torch.utils.data.Dataset):
     def __init__(self, path_root, T_in, T_out=None, train=True, strategy="markov", std=0.0):
         self.markov = strategy == "markov"
@@ -12,12 +21,28 @@ class flood_data(torch.utils.data.Dataset):
         self.one_shot = strategy == "oneshot"
         self.path_root = path_root
         # self.data = data[..., :(T_in + T_out)] if self.one_shot else data[..., :(T_in + T_out), :]
-        self.data = []
-        n = len([name for name in os.listdir(self.path_root) if os.path.isfile(os.path.join(self.path_root, name))])
-        print('number', n)
-        for name in os.listdir(self.path_root):
-            path_idx = os.path.join(self.path_root, name)
-            self.data.append(path_idx)
+        pt_files = [
+            name
+            for name in os.listdir(self.path_root)
+            if name.lower().endswith(".pt")
+            and os.path.isfile(os.path.join(self.path_root, name))
+        ]
+
+        pt_files.sort(
+            key=lambda name: (_natural_sort_key(name), name.casefold(), name)
+        )
+
+        if not pt_files:
+            raise FileNotFoundError(
+                f"No .pt files found in dataset directory: {self.path_root}"
+            )
+
+        self.data = [
+            os.path.join(self.path_root, name)
+            for name in pt_files
+        ]
+
+        print("number", len(self.data))
         self.nt = T_in + T_out
         self.T_in = T_in
         self.T_out = T_out
@@ -40,7 +65,7 @@ class flood_data(torch.utils.data.Dataset):
         if not self.train or not (self.markov or self.teacher_forcing): # full target: return all future steps
             pde_path = self.data[idx]
             # path_idx = os.path.join(path_root, str(idx) + ".pt")
-            pde = torch.load(pde_path)
+            pde = torch.load(pde_path, map_location="cpu")
             # pde = pde.permute(1, 2, 0, 3)
             if self.one_shot:
                 x = pde[..., :self.T_in, :3]
@@ -110,7 +135,7 @@ class flood_data(torch.utils.data.Dataset):
         pde_path = self.data[pde_idx]
         # path_idx = os.path.join(path_root, str(pde_idx) + ".pt")
         # pde = torch.load(path_idx)
-        pde = torch.load(pde_path)
+        pde = torch.load(pde_path, map_location="cpu")
         pde = pde.permute(1, 2, 0, 3)
         x = pde[..., (t_idx - self.num_hist):t_idx, :]
         mask = (x[..., 0:1] == 0.0)
