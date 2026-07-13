@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import time
+from pathlib import Path
 
 try:
     from models.FNO import FNO2d, FNO3d
@@ -111,6 +112,12 @@ parser.add_argument("--lmbda", type=float, default=0.0001, help="weight decay fo
 parser.add_argument("--strategy", type=str, default="oneshot", help="markov, recurrent or oneshot")
 parser.add_argument("--time_pad", action="store_true", help="pad the time dimension for strategy=oneshot")
 parser.add_argument("--noise_std", type=float, default=0.00, help="amount of noise to inject for strategy=markov")
+parser.add_argument(
+    "--data_path",
+    type=str,
+    required=True,
+    help="Root directory containing train, valid, and test PT folders",
+)
 
 args = parser.parse_args()
 
@@ -126,7 +133,26 @@ random.seed(args.seed)
 
 data_aug = "aug" in args.model_type
 
-TRAIN_PATH = args.data_path
+data_root = Path(args.data_path).expanduser().resolve()
+
+if not data_root.is_dir():
+    raise FileNotFoundError(
+        f"Dataset root directory not found: {data_root}"
+    )
+
+Path_train = data_root / "train"
+Path_valid = data_root / "valid"
+Path_test = data_root / "test"
+
+for split_name, split_path in {
+    "train": Path_train,
+    "valid": Path_valid,
+    "test": Path_test,
+}.items():
+    if not split_path.is_dir():
+        raise FileNotFoundError(
+            f"Missing '{split_name}' dataset directory: {split_path}"
+        )
 
 # FNO data specs
 Sy = 433
@@ -212,9 +238,6 @@ full_data = None # for superres
 # SR dataset
 dem_tif_path = 'Path/to/moa_bottom.tif'
 man_path = 'Path/to/moa_rough.tif'
-Path_train = 'Path/to/Train_dataset'
-Path_valid = 'Path/to/Valid_dataset'
-Path_test = 'Path/to/Test_dataset'
 
 
 
