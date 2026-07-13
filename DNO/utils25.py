@@ -14,6 +14,40 @@ def _natural_sort_key(name):
         for part in parts
     )
 
+
+def _validate_oneshot_tensor(
+    tensor,
+    tensor_path,
+    required_timesteps,
+    required_channels=5,
+):
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError(
+            f"Expected a torch.Tensor in {tensor_path}, "
+            f"but found {type(tensor).__name__}"
+        )
+
+    if tensor.ndim != 4:
+        raise ValueError(
+            f"Expected oneshot tensor shape [X, Y, T, C] in "
+            f"{tensor_path}, but found shape {tuple(tensor.shape)}"
+        )
+
+    if tensor.shape[-2] < required_timesteps:
+        raise ValueError(
+            f"Tensor in {tensor_path} has only "
+            f"{tensor.shape[-2]} timesteps; "
+            f"at least {required_timesteps} are required"
+        )
+
+    if tensor.shape[-1] < required_channels:
+        raise ValueError(
+            f"Tensor in {tensor_path} has only "
+            f"{tensor.shape[-1]} channels; "
+            f"at least {required_channels} are required"
+        )
+
+
 class flood_data(torch.utils.data.Dataset):
     def __init__(self, path_root, T_in, T_out=None, train=True, strategy="markov", std=0.0):
         self.markov = strategy == "markov"
@@ -66,6 +100,13 @@ class flood_data(torch.utils.data.Dataset):
             pde_path = self.data[idx]
             # path_idx = os.path.join(path_root, str(idx) + ".pt")
             pde = torch.load(pde_path, map_location="cpu")
+            if self.one_shot:
+                _validate_oneshot_tensor(
+                    pde,
+                    pde_path,
+                    required_timesteps=self.nt,
+                    required_channels=5,
+                )
             # pde = pde.permute(1, 2, 0, 3)
             if self.one_shot:
                 x = pde[..., :self.T_in, :3]
