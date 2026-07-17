@@ -62,6 +62,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=6, help="DNO width")
     parser.add_argument("--epochs", type=int, default=3, help="Total target number of training epochs")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="Adam learning rate")
+    parser.add_argument(
+        "--loss-mode",
+        choices=["mse", "wet_weighted_mse"],
+        default="mse",
+        help="Training loss mode",
+    )
+    parser.add_argument("--wet-threshold", type=float, default=0.05, help="Water-depth threshold for wet weighted loss")
+    parser.add_argument("--wet-weight", type=float, default=3.0, help="Loss weight multiplier for wet cells")
+    parser.add_argument("--h-channel-weight", type=float, default=1.0, help="Additional loss weight for the H channel")
     parser.add_argument("--device", default="cuda:0", help="Training device")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--num-workers", type=int, default=0, help="DataLoader worker count")
@@ -201,6 +210,28 @@ def compute_metrics_from_reduced(pred: torch.Tensor, target: torch.Tensor) -> Di
         "mae": mae,
         **channel_metrics,
     }
+
+
+def weighted_mse_loss(prediction: torch.Tensor, target: torch.Tensor, wet_threshold: float, wet_weight: float, h_channel_weight: float) -> torch.Tensor:
+    if prediction.shape != target.shape:
+        raise ValueError(f"Prediction/target shape mismatch: {tuple(prediction.shape)} vs {tuple(target.shape)}")
+
+    diff = prediction - target
+    squared_error = diff.square()
+
+    loss_weights = torch.ones_like(squared_error)
+    wet_mask = target[..., 0] > wet_threshold
+    if wet_mask.any():
+        loss_weights[wet_mask] = loss_weights[wet_mask] * wet_weight
+
+    if h_channel_weight != 1.0:
+        loss_weights[..., 0] = loss_weights[..., 0] * h_channel_weight
+
+    weighted_error = squared_error * loss_weights
+    total_weight = loss_weights.sum()
+    if total_weight <= 0.0:
+        raise ValueError("Weighted loss has no positive weight")
+    return weighted_error.sum() / total_weight
 
 
 def evaluate_split(
@@ -433,6 +464,10 @@ def main() -> None:
         raise RuntimeError("CUDA requested but not available")
     print(f"device: {device}", flush=True)
     print(f"activation_offload: {args.activation_offload}", flush=True)
+    print(f"loss_mode: {args.loss_mode}", flush=True)
+    print(f"wet_threshold: {args.wet_threshold}", flush=True)
+    print(f"wet_weight: {args.wet_weight}", flush=True)
+    print(f"h_channel_weight: {args.h_channel_weight}", flush=True)
     print(f"target_epochs: {args.epochs}", flush=True)
 
     split_info = build_datasets(data_root, seed=args.seed, num_workers=args.num_workers)
@@ -460,6 +495,10 @@ def main() -> None:
         config = {
             "args": serializable_args,
             "activation_offload": args.activation_offload,
+            "loss_mode": args.loss_mode,
+            "wet_threshold": args.wet_threshold,
+            "wet_weight": args.wet_weight,
+            "h_channel_weight": args.h_channel_weight,
             "resolved_paths": {"data_root": str(data_root), "output_dir": str(output_dir)},
             "split_sizes": {name: len(datasets[name]) for name in ["train", "valid", "test"]},
             "model_parameter_count": parameter_count,
@@ -566,7 +605,18 @@ def main() -> None:
                     if tuple(pred.shape) != EXPECTED_Y_SHAPE:
                         raise ValueError(f"Unexpected prediction shape: {tuple(pred.shape)}")
                     reduced_pred = pred[:, spatial_mask, :, :]
-                    loss = F.mse_loss(reduced_pred, reduced_target)
+                    if args.loss_mode == "mse":
+                        loss = F.mse_loss(reduced_pred, reduced_target)
+                    elif args.loss_mode == "wet_weighted_mse":
+                        loss = weighted_mse_loss(
+                            reduced_pred,
+                            reduced_target,
+                            wet_threshold=args.wet_threshold,
+                            wet_weight=args.wet_weight,
+                            h_channel_weight=args.h_channel_weight,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported loss mode: {args.loss_mode}")
 
                 if not torch.isfinite(loss):
                     raise RuntimeError("Loss is not finite")
@@ -688,6 +738,10 @@ def main() -> None:
             "start_epoch": start_epoch,
             "final_epoch": args.epochs,
             "activation_offload": args.activation_offload,
+            "loss_mode": args.loss_mode,
+            "wet_threshold": args.wet_threshold,
+            "wet_weight": args.wet_weight,
+            "h_channel_weight": args.h_channel_weight,
             "output_file_paths": {
                 "config": str(output_dir / "config.json"),
                 "metrics": str(output_dir / "metrics.csv"),
