@@ -2,6 +2,7 @@
 import datetime
 import os
 import random
+import re
 import time
 from pathlib import Path
 
@@ -51,6 +52,96 @@ if torch.cuda.is_available():
     device = torch.device('cuda:0')
 else:
     device = torch.device('cpu')
+
+
+def natural_sort_key(path_value):
+    """Return a deterministic natural-sort key for a PT filename or path."""
+
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", Path(path_value).name)
+    )
+
+
+def naturally_sorted_pt_files(split_path):
+    """Return naturally sorted PT files from one dataset split."""
+
+    pt_files = sorted(
+        (
+            path
+            for path in split_path.iterdir()
+            if path.is_file() and path.suffix.lower() == ".pt"
+        ),
+        key=lambda path: (natural_sort_key(path), path.name.casefold(), path.name),
+    )
+    if not pt_files:
+        raise FileNotFoundError(f"No .pt files found in dataset directory: {split_path}")
+    return pt_files
+
+
+def inspect_split_tensor(split_name, split_path, expected_timesteps, expected_channels):
+    """Validate the first naturally sorted tensor in a split and return its shape."""
+
+    tensor_path = naturally_sorted_pt_files(split_path)[0]
+    try:
+        tensor = torch.load(tensor_path, map_location="cpu")
+    except Exception as exc:
+        raise ValueError(
+            f"Could not load first {split_name} tensor {tensor_path}: {exc}"
+        ) from exc
+    if not isinstance(tensor, torch.Tensor):
+        raise ValueError(
+            f"First {split_name} PT object is not a torch.Tensor: {tensor_path}"
+        )
+    if tensor.ndim != 4:
+        raise ValueError(
+            f"First {split_name} tensor must have rank 4 [Sy, Sx, time, channels]: "
+            f"{tensor_path} has shape {tuple(tensor.shape)}"
+        )
+    if tensor.dtype != torch.float32:
+        raise ValueError(
+            f"First {split_name} tensor must use torch.float32: "
+            f"{tensor_path} uses {tensor.dtype}"
+        )
+    if tensor.shape[0] <= 0 or tensor.shape[1] <= 0:
+        raise ValueError(
+            f"First {split_name} tensor has non-positive spatial dimensions: "
+            f"{tensor_path} has shape {tuple(tensor.shape)}"
+        )
+    if tensor.shape[2] != expected_timesteps:
+        raise ValueError(
+            f"First {split_name} tensor must contain exactly {expected_timesteps} "
+            f"timesteps: {tensor_path} has {tensor.shape[2]}"
+        )
+    if tensor.shape[3] != expected_channels:
+        raise ValueError(
+            f"First {split_name} tensor must contain exactly {expected_channels} "
+            f"channels: {tensor_path} has {tensor.shape[3]}"
+        )
+    if not bool(torch.isfinite(tensor).all().item()):
+        raise ValueError(f"First {split_name} tensor contains non-finite values: {tensor_path}")
+    return tensor_path, tuple(tensor.shape)
+
+
+def limit_dataset_events(dataset, requested_count, split_name):
+    """Limit a flood_data instance to its first naturally sorted event paths."""
+
+    sorted_paths = sorted(
+        dataset.data,
+        key=lambda path: (natural_sort_key(path), str(path).casefold(), str(path)),
+    )
+    available_count = len(sorted_paths)
+    selected_count = (
+        available_count
+        if requested_count <= 0
+        else min(requested_count, available_count)
+    )
+    dataset.data = sorted_paths[:selected_count]
+    print(
+        f"{split_name} event files: requested={requested_count}, "
+        f"available={available_count}, selected={selected_count}"
+    )
+    return selected_count
 
 def get_eval_pred(model, x, strategy, T, times):
 
@@ -128,7 +219,8 @@ assert args.strategy in ["teacher_forcing", "markov", "recurrent", "oneshot"], "
 
 torch.manual_seed(args.seed)
 np.random.seed(args.seed)
-torch.cuda.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(args.seed)
 random.seed(args.seed)
 
 data_aug = "aug" in args.model_type
@@ -155,8 +247,6 @@ for split_name, split_path in {
         )
 
 # FNO data specs
-Sy = 433
-Sx = 692
 S = 64 # spatial res
 S_super = 4 * S # super spatial res
 T_in = 1 # number of input times
@@ -165,6 +255,39 @@ T_super = 4 * T # prediction temporal super res
 d = 2 # spatial res
 num_channels = 5
 num_channels_y = 3
+
+reference_tensors = {}
+for split_name, split_path in {
+    "train": Path_train,
+    "valid": Path_valid,
+    "test": Path_test,
+}.items():
+    reference_tensors[split_name] = inspect_split_tensor(
+        split_name,
+        split_path,
+        expected_timesteps=T_in + T,
+        expected_channels=num_channels,
+    )
+
+train_reference_path, inferred_shape = reference_tensors["train"]
+for split_name in ("valid", "test"):
+    split_path, split_shape = reference_tensors[split_name]
+    if split_shape != inferred_shape:
+        raise ValueError(
+            f"First train, valid, and test tensors must have identical full shapes: "
+            f"train {train_reference_path} has {inferred_shape}, "
+            f"{split_name} {split_path} has {split_shape}"
+        )
+
+Sy, Sx = inferred_shape[:2]
+print("Startup data summary")
+print(f"  device: {device}")
+print(f"  inferred tensor shape [Sy, Sx, time, channels]: {inferred_shape}")
+print(f"  Sy: {Sy}")
+print(f"  Sx: {Sx}")
+print(f"  T_in: {T_in}")
+print(f"  T_out: {T}")
+print(f"  channels: {num_channels}")
 
 # adjust data specs based on model type and data path
 threeD = args.model_type in ["FNO3d",
@@ -176,10 +299,6 @@ if args.grid:
     grid_type = args.grid
     assert grid_type in ['symmetric', 'cartesian', 'None']
 
-
-ntrain = args.ntrain # 1000
-nvalid = args.nvalid
-ntest = args.ntest # 200
 
 time_modes = None
 time1 = args.strategy == "oneshot" # perform convolutions in space-time
@@ -242,14 +361,21 @@ man_path = 'Path/to/moa_rough.tif'
 
 
 train_data = flood_data(path_root=Path_train, strategy=args.strategy, T_in=T_in, T_out=T, std=args.noise_std)
+train_event_count = limit_dataset_events(train_data, args.ntrain, "train")
 ntrain = len(train_data)
-print('ntrain', ntrain)
+print('ntrain dataset samples', ntrain)
 valid_data = flood_data(path_root=Path_valid, train=False, strategy=args.strategy, T_in=T_in, T_out=T)
+valid_event_count = limit_dataset_events(valid_data, args.nvalid, "valid")
 nvalid = len(valid_data)
-print('nvalid', nvalid)
+print('nvalid dataset samples', nvalid)
 test_data = flood_data(path_root=Path_test, train=False, strategy=args.strategy, T_in=T_in, T_out=T)
+test_event_count = limit_dataset_events(test_data, args.ntest, "test")
 ntest = len(test_data)
-print('ntest', ntest)
+print('ntest dataset samples', ntest)
+print(
+    f"Selected event files: train={train_event_count}, "
+    f"valid={valid_event_count}, test={test_event_count}"
+)
 
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
 valid_loader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size, shuffle=False)
