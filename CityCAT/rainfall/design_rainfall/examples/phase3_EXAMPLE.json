@@ -1,0 +1,35 @@
+{
+  "experiment_name": "EXAMPLE_stockbridge_phase3_design_rainfall",
+  "experiment_version": "EXAMPLE_v0_not_for_production",
+  "phase": "Phase 3 EXAMPLE",
+  "rainfall_index_start": 101,
+  "number_of_events": 200,
+  "random_seed": 12345,
+  "temporal": {
+    "rainfall_timestep_seconds": 300,
+    "simulation_horizon_seconds": 7200,
+    "maximum_active_duration_seconds": 7200,
+    "depth_tolerance_mm": 1e-06,
+    "citycat_value_tolerance": 1e-15
+  },
+  "requested_durations": {
+    "range_seconds": {
+      "start": 300,
+      "stop": 7200,
+      "step": 300
+    }
+  },
+  "requested_return_periods_years": [],
+  "permitted_profile_families": [
+    "EXAMPLE_asymmetric_triangular",
+    "EXAMPLE_FEH_ReFH_compatible"
+  ],
+  "evaluation_roles": {
+    "strategy": "EXAMPLE_not_yet_approved",
+    "roles": [],
+    "provisional": true
+  },
+  "source_ddf_table_path": "EXAMPLE_REPLACE_WITH_APPROVED_DDF.csv",
+  "output_root": "EXAMPLE_OUTPUT_NOT_FOR_PRODUCTION",
+  "data_status": "provisional"
+}
