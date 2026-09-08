@@ -22,8 +22,19 @@ from .ddf import (
     apply_climate_uplift,
     load_ddf_csv,
 )
+from .gridded_ddf import (
+    ArcInfoASCIIGrid,
+    GridPointDDFExtraction,
+    GriddedDDFCatalogue,
+    GriddedDDFCatalogueEntry,
+    GriddedDDFExtractionResult,
+    extract_ddf_at_point,
+    load_gridded_ddf_catalogue,
+    read_arcinfo_ascii_grid,
+)
 
 __all__ = [
+    "ArcInfoASCIIGrid",
     "ClimateUpliftResult",
     "DDFEstimate",
     "DDFRecord",
@@ -31,13 +42,20 @@ __all__ = [
     "DurationRequest",
     "EvaluationRoleConfiguration",
     "ExperimentConfiguration",
+    "GridPointDDFExtraction",
+    "GriddedDDFCatalogue",
+    "GriddedDDFCatalogueEntry",
+    "GriddedDDFExtractionResult",
     "RainfallEvent",
     "TemporalConfiguration",
     "apply_climate_uplift",
     "export_citycat_rainfall",
+    "extract_ddf_at_point",
     "generate_timeline",
     "validate_citycat_rainfall",
     "validate_rainfall_event",
     "load_ddf_csv",
     "load_experiment_configuration",
+    "load_gridded_ddf_catalogue",
+    "read_arcinfo_ascii_grid",
 ]
