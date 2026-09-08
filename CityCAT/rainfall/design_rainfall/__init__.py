@@ -32,6 +32,7 @@ from .gridded_ddf import (
     load_gridded_ddf_catalogue,
     read_arcinfo_ascii_grid,
 )
+from .triangular_pulse import TriangularPulse, generate_triangular_pulse
 
 __all__ = [
     "ArcInfoASCIIGrid",
@@ -48,10 +49,12 @@ __all__ = [
     "GriddedDDFExtractionResult",
     "RainfallEvent",
     "TemporalConfiguration",
+    "TriangularPulse",
     "apply_climate_uplift",
     "export_citycat_rainfall",
     "extract_ddf_at_point",
     "generate_timeline",
+    "generate_triangular_pulse",
     "validate_citycat_rainfall",
     "validate_rainfall_event",
     "load_ddf_csv",
