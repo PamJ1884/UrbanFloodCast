@@ -6,6 +6,10 @@ from .config import (
     ExperimentConfiguration,
     load_experiment_configuration,
 )
+from .composite_pulse import (
+    CompositeTriangularPulse,
+    generate_composite_triangular_pulse,
+)
 from .core import (
     RainfallEvent,
     TemporalConfiguration,
@@ -37,6 +41,7 @@ from .triangular_pulse import TriangularPulse, generate_triangular_pulse
 __all__ = [
     "ArcInfoASCIIGrid",
     "ClimateUpliftResult",
+    "CompositeTriangularPulse",
     "DDFEstimate",
     "DDFRecord",
     "DDFTable",
@@ -54,6 +59,7 @@ __all__ = [
     "export_citycat_rainfall",
     "extract_ddf_at_point",
     "generate_timeline",
+    "generate_composite_triangular_pulse",
     "generate_triangular_pulse",
     "validate_citycat_rainfall",
     "validate_rainfall_event",

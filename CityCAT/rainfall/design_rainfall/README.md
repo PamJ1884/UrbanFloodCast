@@ -158,6 +158,25 @@ metadata. This generator assigns no return period and defines no production
 ensemble naming or allocation. FEH/ReFH profiles, multiple-pulse composition,
 and event-selection logic are not implemented at this stage.
 
+## Two-pulse triangular composite
+
+`CompositeTriangularPulse` contains exactly two `TriangularPulse` definitions,
+ordered in time. The second pulse must start strictly after the first pulse's
+absolute endpoint. Touching and overlapping pulses are rejected so the interval
+between them is a strictly positive dry gap, including zero intensity at both
+gap endpoints.
+
+Each constituent is generated independently by the Stage 3A implementation and
+conserves its own discretely integrated target depth. The two sampled intensity
+series are added without global rescaling, so the composite depth is the sum of
+the two constituent depths. Composite metadata retains the complete Stage 3A
+peak metadata for each pulse as separate first- and second-pulse mappings.
+
+The composite `RainfallEvent.active_duration_seconds` is the second pulse's
+absolute end time, not either pulse duration or the sum of their durations. The
+caller supplies all event identity and role fields. No return period is assigned
+automatically to the composite event.
+
 ## Rainfall duration and current scope
 
 `active_duration_seconds` denotes the endpoint of active rainfall. Rainfall intensity
