@@ -26,6 +26,11 @@ from .ddf import (
     apply_climate_uplift,
     load_ddf_csv,
 )
+from .feh_point_ddf import (
+    FEHPointDDFMetadata,
+    FEHPointDDFResult,
+    load_feh_point_ddf_csv,
+)
 from .gridded_ddf import (
     ArcInfoASCIIGrid,
     GridPointDDFExtraction,
@@ -48,6 +53,8 @@ __all__ = [
     "DurationRequest",
     "EvaluationRoleConfiguration",
     "ExperimentConfiguration",
+    "FEHPointDDFMetadata",
+    "FEHPointDDFResult",
     "GridPointDDFExtraction",
     "GriddedDDFCatalogue",
     "GriddedDDFCatalogueEntry",
@@ -65,6 +72,7 @@ __all__ = [
     "validate_rainfall_event",
     "load_ddf_csv",
     "load_experiment_configuration",
+    "load_feh_point_ddf_csv",
     "load_gridded_ddf_catalogue",
     "read_arcinfo_ascii_grid",
 ]
