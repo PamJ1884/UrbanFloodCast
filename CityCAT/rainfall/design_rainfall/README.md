@@ -263,6 +263,167 @@ absolute end time, not either pulse duration or the sum of their durations. The
 caller supplies all event identity and role fields. No return period is assigned
 automatically to the composite event.
 
+## Finite-duration Gaussian-family rainfall
+
+`GaussianPulse` and `generate_gaussian_pulse` provide a tapered, finite-duration
+skew-normal-based temporal shape. All seven pulse parameters are required:
+`start_time_seconds`, `duration_seconds`, `target_depth_mm`,
+`peak_position_ratio`, `scale_ratio`, `skewness_parameter` and `edge_taper_ratio`.
+There are no scientific parameter defaults. Event identity arguments match the
+triangular generator: `rainfall_index`, `phase_event_id`, `storm_id`, `role` and
+`profile_family`. Start and duration must align with the configured timestep;
+the absolute endpoint `start + duration` must be within both the maximum active
+endpoint and simulation horizon. This absolute endpoint becomes
+`RainfallEvent.active_duration_seconds`.
+
+DDF depth and temporal shape are separate inputs. This generator receives a
+positive target depth and does no DDF lookup, return-period assignment, climate
+uplift or ensemble selection. Assigning a DDF depth does not establish the
+frequency of occurrence of the exact hyetograph. The approved dataset target is
+100 existing Phase 2 events, 100 new FEH/ReFH events, 100 new individual
+DDF-based triangular events and 50 new Gaussian-family events; the illustrative
+parameters below do not select those events. Two-pulse experiments are deferred
+to longer horizons, and their existing implementation remains available.
+
+### Shape, mode and finite support
+
+The underlying standard skew-normal shape is
+`f(z; alpha) = 2 * phi(z) * Phi(alpha*z)`, where `phi` and `Phi` are the standard
+normal density and CDF. Alpha zero gives the normal (Gaussian) shape. Nonzero
+alpha controls asymmetry; it is a distribution parameter, **not a measured
+skewness coefficient**. Set
+
+```text
+scale_seconds = scale_ratio * duration_seconds
+requested_peak_time = start + peak_position_ratio * duration
+location_seconds = requested_peak_time - scale_seconds * m(alpha)
+z = (t - location_seconds) / scale_seconds
+```
+
+`m(alpha)` is the standardized mode, not the location parameter. Its calculation
+uses `m(0)=0` and `m(-a)=-m(a)`. For positive `a`, differentiation gives
+`m*Phi(a*m) = a*phi(a*m)`. The implementation solves an increasing equation by
+sign-bracketed bisection, with relative bracket tolerance `1e-13` and at most
+128 iterations. For `a<=1` it solves for `q=m/a` in `[0,sqrt(2/pi)]` using
+`q=phi(a*a*q)/Phi(a*a*q)`. For `a>1` it solves for `v=a*m` in log form:
+`log(v)+log(Phi(v))+v*v/2+log(2*pi)/2-2*log(a)=0`, with a bounded bracket search.
+This avoids squaring a very large alpha or bisecting a very small mode directly.
+Invalid brackets, non-finite residuals and non-convergence raise an error.
+There is no fallback that equates location with the requested peak.
+
+The requested peak is never snapped to the rainfall timestep. Shape evaluation
+uses the equivalent expression `z=(t-requested_peak_time)/scale_seconds+m(alpha)`
+to reduce cancellation involving the location. The CDF uses `math.erfc` to avoid
+negative-tail cancellation. Only NumPy and Python's standard library are needed.
+SciPy was available in the inspected `dno` environment, but was not a declared
+repository dependency and is not required by this generator or its tests.
+
+For `u=(t-start)/duration` and `e=edge_taper_ratio`, the dimensionless sampled
+shape is `f(z; alpha)*w(u)`, with exactly the following taper:
+
+```text
+w(u) = sin((pi/2) * min(u/e, (1-u)/e, 1))**2,  0 < u < 1
+w(u) = 0,                                     otherwise
+```
+
+The taper ratio must be strictly between zero and one half. Rainfall is exactly
+zero at/before start and at/after the endpoint. This is a tapered finite-duration
+profile, **not an unchanged normal or skew-normal probability distribution**.
+Tapering can shift the continuous maximum, and sampling can shift the observed
+maximum further. The final peak is not guaranteed to equal the requested peak.
+Metadata distinguishes the requested unmodified mode, distribution location and
+all timeline samples attaining the numerical maximum. A continuous maximum of
+the tapered profile is not calculated.
+
+### Depth conservation and diagnostics
+
+The shape is sampled on the full configured timeline, then multiplied by
+`target_depth_mm / integral(shape, time_hours)` using the same discrete
+trapezoidal convention as the core. The pre-normalization integral must be finite
+and positive. The normalization factor has units mm/hour. Final intensities must
+be finite and non-negative, and integrated depth must match the target within
+`configuration.depth_tolerance_mm`. The existing core validates the final event.
+There is no clipping, intensity cap or normalization to a prescribed maximum.
+
+At least two strictly positive interior samples are required; otherwise loading
+the shape raises a temporal-resolution error. This is only a structural minimum,
+not proof of adequate resolution. In particular, narrow profiles can pass while
+their peaks and widths remain poorly represented. Floating-point tails can
+underflow to zero; unrepresentable scale/location or normalization values are
+rejected. The mode tolerance is numerical, not a physical peak-time guarantee
+when multiplied by an extreme scale. Review timestep, positive-sample count,
+sampled maximum and effective width before later ensemble selection.
+
+`peak_metadata` preserves every input parameter, absolute start/endpoint,
+scale in seconds, standardized mode and solver method/tolerance, distribution
+location, requested peak, maximum intensity and all maximum times, raw shape
+integral, normalization factor/units, integrated/target depths, timestep,
+integration method, positive-interior-sample count and the exact taper definition.
+It also reports:
+
+- `temporal_centroid_seconds`: mean rainfall time from simulation time zero.
+- `effective_temporal_standard_deviation_seconds`: measured rainfall width in
+  seconds about that centroid; `scale_ratio` is not this effective width.
+- `depth_fraction_up_to_requested_peak`: fraction of the sampled rainfall depth
+  accumulated by the unsnapped requested peak, including partial intervals.
+
+Diagnostics use rainfall depth as the weight of the **piecewise-linear intensity
+curve**, not nodal point masses. Segment integrals are analytic. For a segment
+`[a,b]` of length `h` with endpoint weights `y0,y1`, its area is
+`h*(y0+y1)/2` and first moment is
+`h*((2*a+b)*y0+(a+2*b)*y1)/6`. After centering the endpoints on the calculated
+mean, its second moment is
+`h*((3*a*a+2*a*b+b*b)*y0+(a*a+2*a*b+3*b*b)*y1)/12`.
+Calculations use dimensionless pulse time and intensity divided by its maximum
+for numerical stability; these factors cancel in the ratios. Seconds are
+restored in the reported centroid and standard deviation. For a partial segment,
+the intensity at the cutoff is linearly interpolated and its partial trapezoid
+is integrated exactly. Tests independently check these diagnostics using
+two-node Gauss-Legendre integration (exact for the degree-three integrands) and
+an analytically known triangular curve.
+
+### Illustrative TEST configuration
+
+These explicit values are software-test parameters, not approved ensemble defaults.
+The example creates only in-memory events; it writes no production files.
+
+```python
+from CityCAT.rainfall.design_rainfall import (
+    GaussianPulse, TemporalConfiguration, generate_gaussian_pulse,
+)
+
+configuration = TemporalConfiguration(
+    rainfall_timestep_seconds=300,
+    simulation_horizon_seconds=7200,
+    maximum_active_duration_seconds=5400,
+)
+test_events = []
+for index, (alpha, scale_ratio) in enumerate(
+    [(-2.0, 0.18), (0.0, 0.15), (2.0, 0.18)], start=901
+):
+    pulse = GaussianPulse(
+        start_time_seconds=0,
+        duration_seconds=3600,
+        target_depth_mm=20.0,
+        peak_position_ratio=0.5,
+        scale_ratio=scale_ratio,
+        skewness_parameter=alpha,
+        edge_taper_ratio=1.0 / 12.0,
+    )
+    test_events.append(generate_gaussian_pulse(
+        configuration, pulse,
+        rainfall_index=index,
+        phase_event_id=f"TEST-GAUSSIAN-{index}",
+        storm_id=f"TEST-STORM-{index}",
+        role="TEST_ROLE",
+        profile_family="TEST_GAUSSIAN_FAMILY",
+    ))
+```
+
+Run focused tests from the repository root with
+`python -m unittest CityCAT.rainfall.design_rainfall.tests.test_gaussian_pulse -v`
+in `dno`. Synthetic file exports are confined to temporary test directories.
+
 ## Rainfall duration and current scope
 
 `active_duration_seconds` denotes the endpoint of active rainfall. Rainfall intensity

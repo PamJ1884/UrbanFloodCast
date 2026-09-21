@@ -31,6 +31,7 @@ from .feh_point_ddf import (
     FEHPointDDFResult,
     load_feh_point_ddf_csv,
 )
+from .gaussian_pulse import GaussianPulse, generate_gaussian_pulse
 from .gridded_ddf import (
     ArcInfoASCIIGrid,
     GridPointDDFExtraction,
@@ -55,6 +56,7 @@ __all__ = [
     "ExperimentConfiguration",
     "FEHPointDDFMetadata",
     "FEHPointDDFResult",
+    "GaussianPulse",
     "GridPointDDFExtraction",
     "GriddedDDFCatalogue",
     "GriddedDDFCatalogueEntry",
@@ -67,6 +69,7 @@ __all__ = [
     "extract_ddf_at_point",
     "generate_timeline",
     "generate_composite_triangular_pulse",
+    "generate_gaussian_pulse",
     "generate_triangular_pulse",
     "validate_citycat_rainfall",
     "validate_rainfall_event",
