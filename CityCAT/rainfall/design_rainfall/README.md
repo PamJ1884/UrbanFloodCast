@@ -241,8 +241,8 @@ pulse is rejected rather than being assigned fabricated rainfall.
 
 The caller supplies rainfall and event identifiers, role, and profile-family
 metadata. This generator assigns no return period and defines no production
-ensemble naming or allocation. FEH/ReFH profiles, multiple-pulse composition,
-and event-selection logic are not implemented at this stage.
+ensemble naming or allocation. The FSR/FEH reference-profile experiment below
+does not approve a production FEH/ReFH generator or event-selection logic.
 
 ## Two-pulse triangular composite
 
@@ -423,6 +423,118 @@ for index, (alpha, scale_ratio) in enumerate(
 Run focused tests from the repository root with
 `python -m unittest CityCAT.rainfall.design_rainfall.tests.test_gaussian_pulse -v`
 in `dno`. Synthetic file exports are confined to temporary test directories.
+
+## Reference FSR/FEH temporal profiles and experimental conversion
+
+This stage separates four things: the published FSR/FEH profile approximation,
+interval depths calculated from that approximation, our experimental conversion
+to nodal intensities, and full ReFH2 design-package behaviour. These are not
+interchangeable. No definitive ensemble is generated.
+
+The [ReFH technical guide's profile page](https://refhdocs.hydrosolutions.co.uk/Design-DDF-Rainfall-Hyetographs/Design-Storm-Profiles/)
+gives `Y(x)=(1-a**(x**b))/(1-a)`, with summer `(a,b)=(0.100,0.815)` and winter
+`(0.060,1.026)`. Y describes the fraction of depth within the fraction x of
+duration **centred on the peak**. It is not cumulative rainfall from storm start.
+By symmetry, the rainfall before the left boundary of that centred duration is
+half of `1-Y(x)`. With normalized chronological time `u=(t-start)/duration`, this
+gives the derived transformation:
+
+```text
+C(u) = [1-Y(1-2*u)]/2,  0 <= u <= 0.5
+C(u) = [1+Y(2*u-1)]/2,  0.5 <= u <= 1
+C(u) = 0 before the event; 1 after it
+```
+
+`central_depth_fraction` and `chronological_cumulative_fraction` implement these
+scalar functions. Y uses `expm1`; C also uses `log1p` and `expm1` in its left
+branch to avoid subtracting nearly equal numbers near the start. Boundary
+values are exact: Y(0)=0, Y(1)=1, C(0)=0, C(0.5)=0.5, C(1)=1. The central
+instantaneous derivative is never evaluated.
+
+`build_fsr_feh_reference` requires an explicit profile name (`summer` or `winter`),
+start, duration, finite positive target depth and `TemporalConfiguration`.
+Start/duration must be non-boolean integers aligned with the timestep, with the
+absolute endpoint within the simulation horizon and maximum active endpoint.
+`FSRFEHReferenceProfile` contains the full configured interval-edge timeline in
+seconds, cumulative depths in mm, interval depths in mm, interval-average
+intensities in mm/hour, parameters, source link and unit labels. For edges u_i,
+each interval receives `P*(C(u_(i+1))-C(u_i))`. This is exact discretization of the
+approximation within floating-point precision, without derivative sampling or
+normalization. Depth before/after the event is constant and external intervals
+have zero rainfall. `reference.cumulative_depth_at(t)` evaluates the original
+chronological curve at any finite time in absolute seconds.
+
+```python
+from CityCAT.rainfall.design_rainfall import (
+    TemporalConfiguration, build_fsr_feh_reference,
+)
+
+# TEST only; 7200 as maximum active endpoint is not an ensemble decision.
+configuration = TemporalConfiguration(300, 7200, 7200)
+reference = build_fsr_feh_reference(
+    configuration, profile_name="summer", start_time_seconds=0,
+    duration_seconds=3600, target_depth_mm=20.0,
+)
+```
+
+`experimental_fsr_feh.adapt_fsr_feh_reference_experimental` is intentionally
+**not exported from the package public API**. It requires explicit event identity
+arguments, as in the existing generators. Its result retains the unchanged
+reference and an experimental `RainfallEvent`: start/endpoint nodes are zero,
+each interior node is the arithmetic mean of its two adjacent reference
+interval-average intensities, and a global dimensionless normalization factor
+makes the trapezoidal integral equal P. At least two event intervals are needed
+for a positive interior node; invalid integrals/intensities are rejected. The
+core validates the event and its absolute active endpoint. This is a proposed
+numerical adaptation, not an official ReFH method or approved production generator.
+
+The adaptation reports pre-normalization depth, factor, final depth, adapted
+depth for every interval alongside the reference, maximum absolute cumulative
+error at **reference interval edges** in mm and as a fraction of P, reference
+maximum interval-average intensity, and adapted maximum nodal intensity and its
+sample times. These are different peak measures. Peak times use exact numerical
+equality; nominally symmetric ties may differ by floating-point roundoff.
+`cumulative_depth_at(t)` on the
+adaptation integrates each partial linear-intensity interval analytically:
+for elapsed time s within a timestep h, its added depth is
+`[I_left*s + (I_right-I_left)*s*s/(2*h)]/3600`. Cumulative plots therefore use
+quadratic segments rather than linear interpolation between cumulative nodes.
+Preserving total depth does not preserve each reference interval depth.
+
+Run the reproducible synthetic review in `dno` from the repository root:
+
+```bash
+python -m unittest CityCAT.rainfall.design_rainfall.tests.test_fsr_feh_profiles -v
+python -m CityCAT.rainfall.design_rainfall.examples.review_fsr_feh_profiles
+```
+
+The review script uses the already available Matplotlib installation only for
+figures; it is not a dependency of the reference API. It creates a new temporary
+`TEST_fsr_feh_review_*` directory and prints its path. Outputs include Markdown
+and HTML reviews, CSV/JSON comparison metrics, all interval depths, sampled
+cumulative curves, three PNG figures and a three-page PDF. Every comparison is
+labelled TEST / experimental. Both profiles use P=20 mm, timestep=300 seconds,
+horizon/TEST maximum active endpoint=7200 seconds and durations 15, 30, 45, 60,
+90 and 120 minutes. Additional delayed cases use duration/start pairs of
+15/15 and 60/30 minutes. Odd interval counts retain their off-grid centres.
+
+The review additionally estimates the maximum continuous-curve cumulative
+difference on a 300/1024-second grid, including the centre and all event edges.
+It records the estimate's change from a 300/512-second grid. This is a dense-grid
+estimate, not a proven continuous supremum or an error bound. The exact
+edge-only metric and estimated curve metric are named separately. No smoothing,
+peak snapping, clipping or limiter is used. Very small interval depths can lose
+relative precision when differencing cumulative depths; comparisons use
+floating-point tolerances on the target-depth scale.
+
+The primary guide mentions peak limiting in ReFH2.3 for these profiles but does
+not specify its algorithm on the profile page. Limiter compatibility remains
+unresolved; no limiter is invented and software equivalence is not claimed.
+The [design-depth page](https://refhdocs.hydrosolutions.co.uk/Design-DDF-Rainfall-Hyetographs/Design-Rainfall-Depth/)
+describes separate DDF, areal-reduction and seasonal-correction components.
+This stage applies none of those operations, nor uplift. Summer/winter names
+select temporal shapes only; no seasonal or catchment-average frequency meaning
+is inferred from an externally supplied depth.
 
 ## Rainfall duration and current scope
 

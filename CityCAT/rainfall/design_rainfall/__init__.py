@@ -32,6 +32,12 @@ from .feh_point_ddf import (
     load_feh_point_ddf_csv,
 )
 from .gaussian_pulse import GaussianPulse, generate_gaussian_pulse
+from .fsr_feh_profiles import (
+    FSRFEHReferenceProfile,
+    build_fsr_feh_reference,
+    central_depth_fraction,
+    chronological_cumulative_fraction,
+)
 from .gridded_ddf import (
     ArcInfoASCIIGrid,
     GridPointDDFExtraction,
@@ -56,6 +62,7 @@ __all__ = [
     "ExperimentConfiguration",
     "FEHPointDDFMetadata",
     "FEHPointDDFResult",
+    "FSRFEHReferenceProfile",
     "GaussianPulse",
     "GridPointDDFExtraction",
     "GriddedDDFCatalogue",
@@ -65,6 +72,9 @@ __all__ = [
     "TemporalConfiguration",
     "TriangularPulse",
     "apply_climate_uplift",
+    "build_fsr_feh_reference",
+    "central_depth_fraction",
+    "chronological_cumulative_fraction",
     "export_citycat_rainfall",
     "extract_ddf_at_point",
     "generate_timeline",
