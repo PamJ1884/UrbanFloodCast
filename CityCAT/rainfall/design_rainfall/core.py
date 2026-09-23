@@ -137,31 +137,120 @@ def validate_rainfall_event(
             if peak_time >= event.active_duration_seconds:
                 raise ValueError("peak time must precede the active-duration endpoint")
 
+def _format_citycat_comment(text: str) -> str:
+    """Format one CityCAT comment line and reject embedded newlines."""
+
+    raw_text = str(text)
+
+    if "\n" in raw_text or "\r" in raw_text:
+        raise ValueError(
+            "CityCAT metadata comments must contain exactly one line"
+        )
+
+    text = raw_text.strip()
+
+    if not text:
+        return "* * *"
+
+    return f"* * * {text}"
+
+
+def _build_citycat_header(
+    event: RainfallEvent,
+    configuration: TemporalConfiguration,
+    *,
+    metadata_lines: tuple[str, str] | None = None,
+    data_header: str | None = None,
+) -> list[str]:
+    """Build the five-line CityCAT rainfall header.
+
+    CityCAT reserves the first three lines for comments/metadata,
+    the fourth line for the number of rainfall records, and the fifth
+    line for an optional data-column header.
+
+    When metadata_lines is omitted, the historical Phase 2 header is
+    reproduced exactly.
+    """
+
+    if metadata_lines is None:
+        comment_line_2 = "* * * rainfall ***"
+        comment_line_3 = "* * *"
+    else:
+        if len(metadata_lines) != 2:
+            raise ValueError(
+                "metadata_lines must contain exactly two strings"
+            )
+
+        comment_line_2 = _format_citycat_comment(
+            metadata_lines[0]
+        )
+        comment_line_3 = _format_citycat_comment(
+            metadata_lines[1]
+        )
+
+    if data_header is None:
+        comment_line_5 = "* * *"
+    else:
+        comment_line_5 = _format_citycat_comment(
+            data_header
+        )
+
+    return [
+        f"* * * {event.storm_id}",
+        comment_line_2,
+        comment_line_3,
+        str(configuration.number_of_records),
+        comment_line_5,
+    ]
+
 
 def export_citycat_rainfall(
     output_directory: Path | str,
     event: RainfallEvent,
     configuration: TemporalConfiguration,
+    *,
+    metadata_lines: tuple[str, str] | None = None,
+    data_header: str | None = None,
 ) -> Path:
-    """Validate and export one event in the Phase 2 CityCAT text format."""
+    """Validate and export one event in the CityCAT rainfall text format."""
 
     validate_rainfall_event(event, configuration)
+
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
+
     path = output_directory / f"Rainfall_Data_{event.rainfall_index}.txt"
-    values = np.asarray(event.intensities_mm_per_hour, dtype=np.float64) / 1000.0 / 3600.0
-    lines = [
-        f"* * * {event.storm_id}",
-        "* * * rainfall ***",
-        "* * *",
-        str(configuration.number_of_records),
-        "* * *",
-    ]
+
+    values = (
+        np.asarray(
+            event.intensities_mm_per_hour,
+            dtype=np.float64,
+        )
+        / 1000.0
+        / 3600.0
+    )
+
+    lines = _build_citycat_header(
+        event,
+        configuration,
+        metadata_lines=metadata_lines,
+        data_header=data_header,
+    )
+
     lines.extend(
         f"{int(time)} {float(value):.17g}"
-        for time, value in zip(generate_timeline(configuration), values)
+        for time, value in zip(
+            generate_timeline(configuration),
+            values,
+        )
     )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+    path.write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
     return path
 
 
@@ -169,41 +258,99 @@ def validate_citycat_rainfall(
     path: Path | str,
     event: RainfallEvent,
     configuration: TemporalConfiguration,
+    *,
+    metadata_lines: tuple[str, str] | None = None,
+    data_header: str | None = None,
 ) -> None:
     """Validate CityCAT structure, exact timestamps, and converted values."""
 
     validate_rainfall_event(event, configuration)
+
     path = Path(path)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    expected_header = [
-        f"* * * {event.storm_id}",
-        "* * * rainfall ***",
-        "* * *",
-        str(configuration.number_of_records),
-        "* * *",
-    ]
+
+    lines = path.read_text(
+        encoding="utf-8"
+    ).splitlines()
+
+    expected_header = _build_citycat_header(
+        event,
+        configuration,
+        metadata_lines=metadata_lines,
+        data_header=data_header,
+    )
+
     if lines[:5] != expected_header:
-        raise ValueError(f"CityCAT header validation failed: {path}")
+        raise ValueError(
+            f"CityCAT header validation failed: {path}"
+        )
+
     records = lines[5:]
+
     if len(records) != configuration.number_of_records:
-        raise ValueError(f"CityCAT file must contain exactly {configuration.number_of_records} records")
-    parsed_times, parsed_values = [], []
+        raise ValueError(
+            "CityCAT file must contain exactly "
+            f"{configuration.number_of_records} records"
+        )
+
+    parsed_times = []
+    parsed_values = []
+
     for number, line in enumerate(records, start=1):
         tokens = line.split()
+
         if len(tokens) != 2:
-            raise ValueError(f"malformed CityCAT record {number}: {line!r}")
+            raise ValueError(
+                f"malformed CityCAT record {number}: {line!r}"
+            )
+
         try:
             parsed_times.append(int(tokens[0]))
             parsed_values.append(float(tokens[1]))
+
         except ValueError as exc:
-            raise ValueError(f"malformed CityCAT record {number}: {line!r}") from exc
+            raise ValueError(
+                f"malformed CityCAT record {number}: {line!r}"
+            ) from exc
+
     if not np.array_equal(
-        np.asarray(parsed_times, dtype=np.int64), generate_timeline(configuration)
+        np.asarray(
+            parsed_times,
+            dtype=np.int64,
+        ),
+        generate_timeline(configuration),
     ):
-        raise ValueError("CityCAT timestamps do not match the configured timeline")
-    parsed = np.asarray(parsed_values, dtype=np.float64)
-    expected = np.asarray(event.intensities_mm_per_hour, dtype=np.float64) / 1000.0 / 3600.0
-    if not np.isfinite(parsed).all() or np.any(parsed < 0.0):
-        raise ValueError("CityCAT rainfall values must be finite and non-negative")
-    if not np.allclose(parsed, expected, rtol=0.0, atol=configuration.citycat_value_tolerance):
-        raise ValueError("CityCAT metres-per-second conversion is incorrect")
+        raise ValueError(
+            "CityCAT timestamps do not match the configured timeline"
+        )
+
+    parsed = np.asarray(
+        parsed_values,
+        dtype=np.float64,
+    )
+
+    expected = (
+        np.asarray(
+            event.intensities_mm_per_hour,
+            dtype=np.float64,
+        )
+        / 1000.0
+        / 3600.0
+    )
+
+    if (
+        not np.isfinite(parsed).all()
+        or np.any(parsed < 0.0)
+    ):
+        raise ValueError(
+            "CityCAT rainfall values must be finite and non-negative"
+        )
+
+    if not np.allclose(
+        parsed,
+        expected,
+        rtol=0.0,
+        atol=configuration.citycat_value_tolerance,
+    ):
+        raise ValueError(
+            "CityCAT metres-per-second conversion is incorrect"
+        )

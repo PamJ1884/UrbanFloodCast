@@ -167,6 +167,93 @@ class RainfallEventTests(unittest.TestCase):
             )
             validate_citycat_rainfall(path, event, TEST_CONFIGURATION)
 
+    def test_citycat_export_with_optional_metadata(self) -> None:
+        event = synthetic_test_event()
+        metadata_lines = (
+            "backbone=B01 family=triangular subtype=triangular",
+            "D_min=30 T_years=10 depth_mm=10.0 peak_ratio=0.50",
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = export_citycat_rainfall(
+                directory,
+                event,
+                TEST_CONFIGURATION,
+                metadata_lines=metadata_lines,
+                data_header="time_s rainfall_m_s",
+            )
+
+            lines = path.read_text(encoding="utf-8").splitlines()
+
+            self.assertEqual(
+                lines[:5],
+                [
+                    "* * * TEST-STORM-999",
+                    "* * * backbone=B01 family=triangular subtype=triangular",
+                    "* * * D_min=30 T_years=10 depth_mm=10.0 peak_ratio=0.50",
+                    "25",
+                    "* * * time_s rainfall_m_s",
+                ],
+            )
+
+            validate_citycat_rainfall(
+                path,
+                event,
+                TEST_CONFIGURATION,
+                metadata_lines=metadata_lines,
+                data_header="time_s rainfall_m_s",
+            )
+
+    def test_citycat_metadata_rejects_embedded_newlines(self) -> None:
+        event = synthetic_test_event()
+
+        with tempfile.TemporaryDirectory() as directory:
+            for metadata_lines in (
+                ("valid metadata", "invalid\nmetadata"),
+                ("invalid\rmetadata", "valid metadata"),
+            ):
+                with self.subTest(metadata_lines=metadata_lines):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "exactly one line",
+                    ):
+                        export_citycat_rainfall(
+                            directory,
+                            event,
+                            TEST_CONFIGURATION,
+                            metadata_lines=metadata_lines,
+                        )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "exactly one line",
+            ):
+                export_citycat_rainfall(
+                    directory,
+                    event,
+                    TEST_CONFIGURATION,
+                    data_header="time_s\nrainfall_m_s",
+                )
+
+    def test_citycat_metadata_requires_exactly_two_lines(self) -> None:
+        event = synthetic_test_event()
+
+        with tempfile.TemporaryDirectory() as directory:
+            for metadata_lines in (
+                ("one line",),
+                ("one", "two", "three"),
+            ):
+                with self.subTest(metadata_lines=metadata_lines):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "exactly two strings",
+                    ):
+                        export_citycat_rainfall(
+                            directory,
+                            event,
+                            TEST_CONFIGURATION,
+                            metadata_lines=metadata_lines,
+                        )
 
 class CitycatValidatorTests(unittest.TestCase):
     def assert_corrupt_file_rejected(
