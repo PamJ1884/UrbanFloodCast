@@ -53,7 +53,7 @@ METRIC_FIELDS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a trained DNO checkpoint on 15 Stockbridge test events."
+        description="Evaluate a trained DNO checkpoint on Stockbridge test events."
     )
     parser.add_argument("--test-dir", type=Path, required=True, help="Directory containing the test PT files")
     parser.add_argument("--checkpoint", type=Path, required=True, help="Trained checkpoint containing epoch and state_dict")
@@ -342,8 +342,9 @@ def main() -> None:
     dataset = flood_data(
         path_root=args.test_dir, T_in=T_IN, T_out=T_OUT, train=False, strategy="oneshot"
     )
-    if len(dataset.data) != 15:
-        raise ValueError(f"Expected exactly 15 test PT events in {args.test_dir}, found {len(dataset.data)}")
+    if len(dataset.data) == 0:
+        raise ValueError(f"No test PT events found in {args.test_dir}")
+    print(f"Test events found: {len(dataset.data)}")
 
     checkpoint = torch.load(args.checkpoint, map_location=device)
     if not isinstance(checkpoint, dict) or "epoch" not in checkpoint or "state_dict" not in checkpoint:
