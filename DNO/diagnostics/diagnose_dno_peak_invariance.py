@@ -332,7 +332,12 @@ def main() -> None:
     ax = axes[1, 2]
     if sens_rows:
         labels = [f"{s['event_id']}\n{s['perturbation'].replace('_with_', ' ↔ ').replace('_', ' ')}" for s in sens_rows]
-        ax.barh(range(len(sens_rows)), [s["relative_change_pred_depth"] for s in sens_rows], color="#2b6cb0")
+        floor = 1e-8  # log axis: show exact zeros at the floor
+        vals = [max(s["relative_change_pred_depth"], floor) for s in sens_rows]
+        ax.barh(range(len(sens_rows)), vals, left=floor, color="#2b6cb0")
+        ax.set_xscale("log")
+        for k, s in enumerate(sens_rows):
+            ax.text(vals[k], k, f" {s['relative_change_pred_depth']:.1e}", va="center", fontsize=7)
         ax.set_yticks(range(len(sens_rows))); ax.set_yticklabels(labels, fontsize=7)
         swaps = [s for s in sens_rows if s["citycat_relative_change_max_map_between_these_events"] != ""]
         if swaps:
