@@ -60,10 +60,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dem-path", type=Path, required=True, help="Georeferenced DEM raster")
     parser.add_argument("--output-dir", type=Path, required=True, help="Directory for evaluation outputs")
     parser.add_argument(
+        "--rain-input-scale", type=float, default=None,
+        help="Rainfall multiplier used in training (read from the checkpoint when stored; legacy default 1.0)",
+    )
+    parser.add_argument(
         "--device", choices=("auto", "cpu", "cuda"), default="auto",
         help="Inference device (default: auto)",
     )
     return parser.parse_args()
+
+
+def resolve_rain_input_scale(checkpoint, cli_value):
+    """Rain scaling must match training. New checkpoints store it; legacy ones imply 1.0."""
+    stored = checkpoint.get("rain_input_scale") if isinstance(checkpoint, dict) else None
+    if stored is None:
+        stored = 1.0
+    if cli_value is not None and float(cli_value) != float(stored):
+        raise ValueError(
+            f"--rain-input-scale {cli_value} differs from the value used in training ({stored})"
+        )
+    return float(stored)
 
 
 def select_device(choice: str) -> torch.device:
@@ -339,16 +355,20 @@ def main() -> None:
     device = select_device(args.device)
     dem_info = load_dem(args.dem_path)
 
+    checkpoint = torch.load(args.checkpoint, map_location=device)
+    if not isinstance(checkpoint, dict) or "epoch" not in checkpoint or "state_dict" not in checkpoint:
+        raise ValueError("Checkpoint must be a dictionary containing 'epoch' and 'state_dict'")
+    rain_input_scale = resolve_rain_input_scale(checkpoint, args.rain_input_scale)
+    print(f"rain_input_scale: {rain_input_scale:g}")
+
     dataset = flood_data(
-        path_root=args.test_dir, T_in=T_IN, T_out=T_OUT, train=False, strategy="oneshot"
+        path_root=args.test_dir, T_in=T_IN, T_out=T_OUT, train=False, strategy="oneshot",
+        rain_input_scale=rain_input_scale,
     )
     if len(dataset.data) == 0:
         raise ValueError(f"No test PT events found in {args.test_dir}")
     print(f"Test events found: {len(dataset.data)}")
 
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    if not isinstance(checkpoint, dict) or "epoch" not in checkpoint or "state_dict" not in checkpoint:
-        raise ValueError("Checkpoint must be a dictionary containing 'epoch' and 'state_dict'")
     if not isinstance(checkpoint["state_dict"], dict):
         raise TypeError("Checkpoint 'state_dict' must be a state dictionary")
     model = DNO(num_channels=5, width=10, initial_step=1, pad=False, factor=1).to(device)

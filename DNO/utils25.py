@@ -49,7 +49,8 @@ def _validate_oneshot_tensor(
 
 
 class flood_data(torch.utils.data.Dataset):
-    def __init__(self, path_root, T_in, T_out=None, train=True, strategy="markov", std=0.0):
+    def __init__(self, path_root, T_in, T_out=None, train=True, strategy="markov", std=0.0,
+                 rain_input_scale=1.0):
         self.markov = strategy == "markov"
         self.teacher_forcing = strategy == "teacher_forcing"
         self.one_shot = strategy == "oneshot"
@@ -83,9 +84,17 @@ class flood_data(torch.utils.data.Dataset):
         self.num_hist = 1 if self.markov else self.T_in
         self.train = train
         self.noise_std = std
+        # Multiplier applied to raw rainfall before log(1 + p/eps)/10.
+        # 1.0 reproduces the original behaviour. Stockbridge tensors store m/s,
+        # for which the original transform yields inputs of ~1e-5..1e-3 (rainfall
+        # effectively invisible); 3.6e6 converts m/s -> mm/h first.
+        self.rain_input_scale = float(rain_input_scale)
 
     def log_transform(self, data, eps=1e-2):
         return torch.log(1 + data/eps)
+
+    def rain_transform(self, rain):
+        return self.log_transform(rain * self.rain_input_scale) / 10.0
 
     def __len__(self):
         if self.train:
@@ -123,7 +132,7 @@ class flood_data(torch.utils.data.Dataset):
                 # contains_nan = torch.any(nan_mask)
                 # print('contains_nan', contains_nan)
                 p = pde[..., self.T_in:(self.T_in + self.T_out), 3:4]
-                x2 = self.log_transform(p) / 10.0
+                x2 = self.rain_transform(p)
                 x2 = torch.unsqueeze(x2, dim = -1)
                 z = pde[..., self.T_in:(self.T_in + self.T_out), 4:5]
                 max_z = z.max()
@@ -155,7 +164,7 @@ class flood_data(torch.utils.data.Dataset):
                 # contains_nan = torch.any(nan_mask)
                 # print('contains_nan', contains_nan)
                 p = pde[..., self.T_in:(self.T_in + self.T_out), 3:4]
-                x2 = self.log_transform(p) / 10.0
+                x2 = self.rain_transform(p)
                 z = pde[..., self.T_in:(self.T_in + self.T_out), 4:5]
                 max_z = z.max()
                 z_value = max_z + 30.0
@@ -188,7 +197,7 @@ class flood_data(torch.utils.data.Dataset):
         z_value = max_z + 30.0
         x[..., -1] = torch.nan_to_num(x[..., -1], nan=z_value)
         x[..., -1] = torch.nn.functional.normalize(x[..., -1])
-        x[..., 3:4] = self.log_transform(x[..., 3:4]) / 10.0
+        x[..., 3:4] = self.rain_transform(x[..., 3:4])
         # x[..., :4] = self.log_transform(x[..., :4])
         y = pde[..., t_idx, :3]
         mask_y = (y[..., 0:1] == 0.0)

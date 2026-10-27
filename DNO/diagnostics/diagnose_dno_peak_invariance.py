@@ -62,12 +62,26 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--label", default="DNO", help="Label used in figure titles and file names")
     p.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    p.add_argument("--rain_input_scale", "--rain-input-scale", dest="rain_input_scale", type=float, default=None,
+                   help="Rainfall multiplier used in training (read from the checkpoint when stored; legacy 1.0)")
     p.add_argument("--width", type=int, default=10, help="DNO width (Stockbridge baselines used 10)")
     p.add_argument(
         "--sensitivity-events", nargs="*", default=None,
         help="Event ids for the rainfall sensitivity test (default: lowest- and highest-rainfall events)",
     )
     return p.parse_args()
+
+
+def resolve_rain_input_scale(checkpoint, cli_value):
+    """Rain scaling must match training. New checkpoints store it; legacy ones imply 1.0."""
+    stored = checkpoint.get("rain_input_scale") if isinstance(checkpoint, dict) else None
+    if stored is None:
+        stored = 1.0
+    if cli_value is not None and float(cli_value) != float(stored):
+        raise ValueError(
+            f"--rain-input-scale {cli_value} differs from the value used in training ({stored})"
+        )
+    return float(stored)
 
 
 def select_device(choice: str) -> torch.device:
@@ -78,19 +92,19 @@ def select_device(choice: str) -> torch.device:
     return torch.device(choice)
 
 
-def load_model(path: Path, width: int, device: torch.device) -> tuple[DNO, Any]:
+def load_model(path: Path, width: int, device: torch.device) -> tuple[DNO, Any, Any]:
     ckpt = torch.load(path, map_location=device)
     state = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
     epoch = ckpt.get("epoch", "unknown") if isinstance(ckpt, dict) else "unknown"
     model = DNO(num_channels=5, width=width, initial_step=T_IN, pad=False, factor=1).to(device)
     model.load_state_dict(state, strict=True)
     model.eval()
-    return model, epoch
+    return model, epoch, ckpt
 
 
-def rain_mmh_from_input(x2: np.ndarray) -> np.ndarray:
-    """Invert x2 = log(1 + p/eps)/10 and convert m/s -> mm/h (assumes tensors store m/s)."""
-    p_ms = RAIN_EPS * np.expm1(RAIN_SCALE * x2.astype(np.float64))
+def rain_mmh_from_input(x2: np.ndarray, rain_scale: float) -> np.ndarray:
+    """Invert x2 = log(1 + scale*p/eps)/10 and convert m/s -> mm/h (assumes tensors store m/s)."""
+    p_ms = RAIN_EPS * np.expm1(RAIN_SCALE * x2.astype(np.float64)) / rain_scale
     return p_ms * 1000.0 * 3600.0
 
 
@@ -121,11 +135,14 @@ def main() -> None:
     device = select_device(args.device)
     tag = args.label.replace(" ", "_")
 
-    dataset = flood_data(path_root=str(args.test_dir), T_in=T_IN, T_out=T_OUT, train=False, strategy="oneshot")
+    model, epoch, ckpt = load_model(args.checkpoint, args.width, device)
+    rain_scale = resolve_rain_input_scale(ckpt, args.rain_input_scale)
+    print(f"rain_input_scale: {rain_scale:g}")
+    dataset = flood_data(path_root=str(args.test_dir), T_in=T_IN, T_out=T_OUT, train=False,
+                         strategy="oneshot", rain_input_scale=rain_scale)
     n_events = len(dataset.data)
     if n_events < 2:
         raise ValueError("Need at least two test events to compare between events")
-    model, epoch = load_model(args.checkpoint, args.width, device)
 
     raw_dem = torch.load(dataset.data[0], map_location="cpu")[..., 0, CH_DEM].numpy().astype(np.float64)
 
@@ -145,7 +162,7 @@ def main() -> None:
         rain_vec = rain_in.reshape(-1, T_OUT).mean(axis=0)
         rain_spatial_spread = float(np.abs(rain_in - rain_vec).max())
         rain_vectors[event_id] = rain_vec
-        rain_mmh = rain_mmh_from_input(rain_vec)
+        rain_mmh = rain_mmh_from_input(rain_vec, rain_scale)
         dem_in = x[0, ..., 0, CH_DEM].cpu().numpy()
         input_ranges["rain_input_max"] = max(input_ranges["rain_input_max"], float(rain_in.max()))
         input_ranges["dem_input_min"] = min(input_ranges["dem_input_min"], float(dem_in.min()))
@@ -248,6 +265,7 @@ def main() -> None:
 
     summary = {
         "label": args.label, "checkpoint": str(args.checkpoint), "checkpoint_epoch": epoch,
+        "rain_input_scale": rain_scale,
         "n_events": n_events,
         "inputs": {
             "events_with_dry_T0 (no cell > 1 cm)": int(sum(r["t0_wet_cells_gt_1cm"] == 0 for r in records)),

@@ -204,6 +204,13 @@ parser.add_argument("--strategy", type=str, default="oneshot", help="markov, rec
 parser.add_argument("--time_pad", action="store_true", help="pad the time dimension for strategy=oneshot")
 parser.add_argument("--noise_std", type=float, default=0.00, help="amount of noise to inject for strategy=markov")
 parser.add_argument(
+    "--rain_input_scale", "--rain-input-scale",
+    type=float,
+    default=1.0,
+    help="Multiplier applied to raw rainfall before log(1+p/0.01)/10. 1.0 = original behaviour; "
+         "use 3.6e6 for tensors storing rainfall in m/s (converts to mm/h). Saved in the checkpoint.",
+)
+parser.add_argument(
     "--data_path",
     type=str,
     required=True,
@@ -288,6 +295,7 @@ print(f"  Sx: {Sx}")
 print(f"  T_in: {T_in}")
 print(f"  T_out: {T}")
 print(f"  channels: {num_channels}")
+print(f"  rain_input_scale: {args.rain_input_scale:g}")
 
 # adjust data specs based on model type and data path
 threeD = args.model_type in ["FNO3d",
@@ -360,15 +368,18 @@ man_path = 'Path/to/moa_rough.tif'
 
 
 
-train_data = flood_data(path_root=Path_train, strategy=args.strategy, T_in=T_in, T_out=T, std=args.noise_std)
+train_data = flood_data(path_root=Path_train, strategy=args.strategy, T_in=T_in, T_out=T, std=args.noise_std,
+                        rain_input_scale=args.rain_input_scale)
 train_event_count = limit_dataset_events(train_data, args.ntrain, "train")
 ntrain = len(train_data)
 print('ntrain dataset samples', ntrain)
-valid_data = flood_data(path_root=Path_valid, train=False, strategy=args.strategy, T_in=T_in, T_out=T)
+valid_data = flood_data(path_root=Path_valid, train=False, strategy=args.strategy, T_in=T_in, T_out=T,
+                        rain_input_scale=args.rain_input_scale)
 valid_event_count = limit_dataset_events(valid_data, args.nvalid, "valid")
 nvalid = len(valid_data)
 print('nvalid dataset samples', nvalid)
-test_data = flood_data(path_root=Path_test, train=False, strategy=args.strategy, T_in=T_in, T_out=T)
+test_data = flood_data(path_root=Path_test, train=False, strategy=args.strategy, T_in=T_in, T_out=T,
+                       rain_input_scale=args.rain_input_scale)
 test_event_count = limit_dataset_events(test_data, args.ntest, "test")
 ntest = len(test_data)
 print('ntest dataset samples', ntest)
@@ -509,7 +520,8 @@ for ep in range(epochs):
         best_valid = valid_l2
         # torch.save(model.state_dict(), path_model)
         state_dict = model.state_dict()
-        torch.save({'epoch': best_epoch, 'state_dict': state_dict}, path_model)
+        torch.save({'epoch': best_epoch, 'state_dict': state_dict,
+                    'rain_input_scale': args.rain_input_scale}, path_model)
     if args.early_stopping:
         if ep - best_epoch > args.early_stopping:
             break
