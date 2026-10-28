@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Generate a deterministic, space-filling Phase 2 rainfall ensemble."""
+# Este codigo genera al menos 20000 tormentas candidatas,
+# descarta las que no cumple criterios y restricciones,y
+# selecciona 100 con combinaciones variadas de par[ametros,
+# las distribuye en 70 entrenamiento/ 15 validacion / 15 prueba,
+# y genera archivos de salida en formato CityCAT y CSV, junto con un resumen y manifest.json."""]"""
 
 from __future__ import annotations
 
-import argparse
-import csv
-import hashlib
+import argparse   # lee opciones de linea de comando
+import csv        # escribe el archivo resumen en csv
+import hashlib    # calcula el hash sha256 de la serie de lluvia
 import json
-import math
+import math       # compara profundidades con una tolerancia
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,9 +22,9 @@ import numpy as np
 
 
 DEFAULT_N_STORMS = 100
-DEFAULT_SEED = 1884
-SIMULATION_HORIZON_S = 7200
-TIMESTEP_S = 300
+DEFAULT_SEED = 1884          # semilla del generador pseudoaleatorio para reproducibilidad
+SIMULATION_HORIZON_S = 7200          # horizonte de simulación en segundos
+TIMESTEP_S = 300                     # paso de tiempo en segundos
 NUMBER_OF_RECORDS = SIMULATION_HORIZON_S // TIMESTEP_S + 1
 MIN_DEPTH_MM = 10.0
 MAX_DEPTH_MM = 60.0
@@ -37,8 +42,8 @@ PHASE1_BENCHMARKS = (
     (35.5, 3600, 1800),
     (60.0, 3600, 1800),
 )
-
-
+                        # la tupla de tupla es para omitir tormenas de la phase 1
+# Este bloque muestra como se organiza una tormenta candidata y seleccionada
 @dataclass(frozen=True)
 class StormCandidate:
     """One feasible rainfall design and its discretised time series."""
@@ -61,7 +66,8 @@ class SelectedStorm:
     split: str
     candidate: StormCandidate
 
-
+# Bloque argparse para leer opciones de linea de comando
+# y generar la semilla, numero de tormentas y directorio de salida
 def parse_args() -> argparse.Namespace:
     """Parse ensemble generation options."""
 
@@ -93,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-
+# Bloque de funciones para construir el eje temporal, y la identificacion de la tormenta
 def simulation_times() -> np.ndarray:
     """Return the fixed 0--7200 second CityCAT timeline."""
 
@@ -106,7 +112,7 @@ def rainfall_hash(intensity_mm_per_hour: np.ndarray) -> str:
     values = np.asarray(intensity_mm_per_hour, dtype="<f8")
     return hashlib.sha256(values.tobytes()).hexdigest()
 
-
+# La funcion make_rainfall_series() construye y normaliza una tormenta triangular asimetrica,
 def make_rainfall_series(
     total_depth_mm: float,
     active_duration_s: int,
@@ -128,7 +134,7 @@ def make_rainfall_series(
     intensity *= total_depth_mm / unscaled_depth_mm
     return intensity
 
-
+# esta funcion excluye las tormentas de la phase 1
 def is_phase1_benchmark(total_depth_mm: float, duration_s: int, peak_time_s: int) -> bool:
     """Return whether a parameter tuple exactly matches a Phase 1 event."""
 
@@ -139,7 +145,7 @@ def is_phase1_benchmark(total_depth_mm: float, duration_s: int, peak_time_s: int
         for benchmark_depth, benchmark_duration, benchmark_peak in PHASE1_BENCHMARKS
     )
 
-
+# esta funcion determina donde puede situarse el pico de la tormenta, dentro de los limites de duracion y proporcion
 def valid_peak_steps(duration_steps: int) -> np.ndarray:
     """Return internal grid steps within the allowed peak-ratio interval."""
 
@@ -147,7 +153,8 @@ def valid_peak_steps(duration_steps: int) -> np.ndarray:
     maximum_step = min(duration_steps - 1, math.floor(MAX_PEAK_RATIO * duration_steps))
     return np.arange(minimum_step, maximum_step + 1, dtype=np.int64)
 
-
+# esta funcion crea el conjunto de tormentas candidatas del que se seleccionaran las 100 finales,
+# y descarta las que no cumplen criterios
 def generate_candidate_pool(n_storms: int, rng: np.random.Generator) -> list[StormCandidate]:
     """Generate a large unique pool of feasible gridded rainfall candidates."""
 
