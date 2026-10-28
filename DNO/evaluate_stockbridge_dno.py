@@ -321,22 +321,111 @@ def plot_temporal(
     path: Path, event_id: str, event: dict[str, np.ndarray], dem: np.ma.MaskedArray,
     extent: tuple[float, float, float, float]
 ) -> None:
+    """Plot standardised temporal water-depth snapshots for CityCAT and DNO."""
     spatial_valid = event["validity_mask"].all(axis=-1) & ~np.ma.getmaskarray(dem)
-    vmax = max(
-        float(np.max(event["target_depth"][spatial_valid])),
-        float(np.max(event["predicted_depth"][spatial_valid])),
-        np.finfo(float).eps,
+
+    # Common visualisation contract used for Stockbridge model comparisons.
+    dry_threshold_m = 0.01
+    depth_vmin_m = 0.0
+    depth_vmax_m = 0.60
+
+    fig, axes = plt.subplots(
+        2,
+        4,
+        figsize=(14.5, 6.8),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
     )
-    fig, axes = plt.subplots(2, 4, figsize=(17, 8), constrained_layout=True)
+
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad("white")
+
     image = None
-    for column, (index, minutes) in enumerate(zip(FORECAST_INDICES, FORECAST_MINUTES)):
-        for row, (name, key) in enumerate((("CityCAT", "target_depth"), ("DNO", "predicted_depth"))):
-            values = np.ma.masked_where(~spatial_valid, event[key][..., index])
-            image = axes[row, column].imshow(values, origin="upper", extent=extent, vmin=0, vmax=vmax)
-            axes[row, column].set_title(f"{name}: {minutes} minutes")
-            map_axis(axes[row, column], extent)
-    fig.colorbar(image, ax=axes, label="Water depth (m)", shrink=0.82)
-    fig.suptitle(f"Temporal evolution of water depth — event {event_id}")
+
+    for column, (index, minutes) in enumerate(
+        zip(FORECAST_INDICES, FORECAST_MINUTES)
+    ):
+        for row, key in enumerate(("target_depth", "predicted_depth")):
+            values = event[key][..., index]
+
+            # Mask cells outside the valid terrain and cells considered dry.
+            shown = np.ma.masked_where(
+                (~spatial_valid) | (~np.isfinite(values)) | (values < dry_threshold_m),
+                values,
+            )
+
+            ax = axes[row, column]
+            image = ax.imshow(
+                shown,
+                origin="upper",
+                extent=extent,
+                aspect="equal",
+                cmap=cmap,
+                vmin=depth_vmin_m,
+                vmax=depth_vmax_m,
+                interpolation="nearest",
+            )
+
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
+
+            # Time is communicated once, in the column headings.
+            if row == 0:
+                ax.set_title(f"{minutes} min", fontsize=11)
+
+            # Keep the coordinate system but avoid repeating labels everywhere.
+            if column == 0:
+                ax.set_ylabel("Northing (m)")
+            else:
+                ax.tick_params(axis="y", labelleft=False)
+
+            if row == 1:
+                ax.set_xlabel("Easting (m)")
+            else:
+                ax.tick_params(axis="x", labelbottom=False)
+
+            ax.tick_params(axis="both", labelsize=8)
+
+    # Architecture/reference labels act as row headings.
+    axes[0, 0].text(
+        -0.27,
+        0.5,
+        "CityCAT",
+        transform=axes[0, 0].transAxes,
+        rotation=90,
+        va="center",
+        ha="center",
+        fontsize=12,
+        fontweight="bold",
+    )
+    axes[1, 0].text(
+        -0.27,
+        0.5,
+        "DNO",
+        transform=axes[1, 0].transAxes,
+        rotation=90,
+        va="center",
+        ha="center",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    cbar = fig.colorbar(
+        image,
+        ax=axes,
+        orientation="vertical",
+        fraction=0.025,
+        pad=0.02,
+        extend="max",
+    )
+    cbar.set_label("Water depth (m)")
+
+    fig.suptitle(
+        f"Temporal evolution of water depth — {event_id}",
+        fontsize=14,
+    )
+
     fig.savefig(path, dpi=300)
     plt.close(fig)
 
